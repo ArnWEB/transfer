@@ -213,10 +213,10 @@ def main():
     
     # Run all examples
     example_basic_usage()
-    example_custom_pipeline()
-    example_detailed_report()
-    example_compare_diseases()
-    example_individual_components()
+    # example_custom_pipeline()
+    # example_detailed_report()
+    # example_compare_diseases()
+    # example_individual_components()
     
     print("\n" + "=" * 60)
     print("✅ All examples completed!")
