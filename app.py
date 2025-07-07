@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Query
 import requests
 from typing import Dict, List, Any, Union
+from cache_utils import get_cached_pdbs, cache_uniprot_pdb, get_pdb_metadata_with_cache, fetch_chain_id_for_uniprot
 
 app = FastAPI()
 
@@ -84,16 +85,14 @@ def select_best_pdb_for_target(target: Dict[str, Any]) -> Dict[str, Any]:
     best_score = -1
 
     for pdb_id in target.get("pdb_ids", []):
-        metadata = get_pdb_metadata(pdb_id)
+        metadata = get_pdb_metadata_with_cache(pdb_id, get_pdb_metadata)
+        metadata['organism'] = "Homo sapiens"
         if "error" in metadata:
             continue
-            
         pdb_score = score_pdb_structure(metadata)
-        
         if pdb_score > best_score:
             best_score = pdb_score
             best_pdb = metadata
-    
     return {
         "gene_symbol": target["gene_symbol"],
         "uniprot_id": target.get("uniprot_id"),
@@ -103,7 +102,7 @@ def select_best_pdb_for_target(target: Dict[str, Any]) -> Dict[str, Any]:
 
 def get_pdb_ids_for_targets(targets):
     """
-    Enrich targets with PDB IDs from UniProt.
+    Enrich targets with PDB IDs from UniProt, using Redis cache for UniProt → PDB mapping.
     """
     results = []
     for target in targets:
@@ -133,23 +132,30 @@ def get_pdb_ids_for_targets(targets):
         # Take first UniProt ID
         uniprot_id = search_results["results"][0]["primaryAccession"]
 
-        # Step 2. Get PDB IDs from entry
-        entry_url = f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.json"
-        entry_response = requests.get(entry_url)
-        if entry_response.status_code != 200:
-            results.append({
-                "gene_symbol": gene_symbol,
-                "uniprot_id": uniprot_id,
-                "error": "Failed to retrieve UniProt entry",
-                "score": score
-            })
-            continue
+        # Check cache for PDB IDs
+        cached_pdbs = get_cached_pdbs(uniprot_id)
+        if cached_pdbs is not None:
+            pdb_ids = cached_pdbs
+        else:
+            # Step 2. Get PDB IDs from entry
+            entry_url = f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.json"
+            entry_response = requests.get(entry_url)
+            if entry_response.status_code != 200:
+                results.append({
+                    "gene_symbol": gene_symbol,
+                    "uniprot_id": uniprot_id,
+                    "error": "Failed to retrieve UniProt entry",
+                    "score": score
+                })
+                continue
 
-        entry_data = entry_response.json()
-        pdb_ids = []
-        for xref in entry_data.get("uniProtKBCrossReferences", []):
-            if xref["database"] == "PDB":
-                pdb_ids.append(xref["id"])
+            entry_data = entry_response.json()
+            pdb_ids = []
+            for xref in entry_data.get("uniProtKBCrossReferences", []):
+                if xref["database"] == "PDB":
+                    pdb_ids.append(xref["id"])
+            # Cache the result
+            cache_uniprot_pdb(uniprot_id, pdb_ids)
 
         results.append({
             "gene_symbol": gene_symbol,
@@ -322,6 +328,11 @@ def get_targets_with_best_pdb(
     for target in enriched_targets:
         if target.get("pdb_ids"):  # Only process targets with PDB IDs
             result = select_best_pdb_for_target(target)
+            # Enrich with chain ID if best_pdb exists
+            best_pdb = result.get("best_pdb")
+            if best_pdb and best_pdb.get("pdb_id") and target.get("uniprot_id"):
+                chain_id = fetch_chain_id_for_uniprot(best_pdb["pdb_id"], target["uniprot_id"])
+                best_pdb["chain_id"] = chain_id
             final_recommendations.append(result)
         else:
             # Include targets without PDB IDs but mark them
