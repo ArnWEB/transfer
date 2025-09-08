@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { X, Shield, CheckCircle, AlertCircle } from 'lucide-react';
-import { DialogConfig, DialogField } from '../types/auth';
+export interface DialogField {
+  id: string;
+  type: 'text' | 'textarea' | 'select' | 'checkbox' | 'radio' | 'number' | 'email';
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  options?: string[]; // For select, radio
+  value?: string | boolean | number;
+}
+
+export interface DialogConfig {
+  title: string;
+  description?: string;
+  fields: DialogField[];
+  submitText?: string;
+}
 
 interface DialogBoxProps {
   isOpen: boolean;
